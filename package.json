@@ -1,0 +1,18 @@
+{
+  "name": "domain-search-system",
+  "version": "1.0.0",
+  "description": "Domain search system using SerpAPI",
+  "type": "module",
+  "scripts": {
+    "dev:server": "node server.js",
+    "dev:client": "cd client && npx -y vite",
+    "dev": "node server.js & cd client && npx -y vite"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "vite": "^8.0.14"
+  }
+}

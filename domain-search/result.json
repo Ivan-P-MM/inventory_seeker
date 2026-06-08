@@ -1,0 +1,22 @@
+[
+  {
+    "model": "gemini-2.0-flash",
+    "success": false,
+    "error": "[GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent: [404 Not Found] This model models/gemini-2.0-flash is no longer available to new users. Please update your code to use a newer model for the latest features and improvements."
+  },
+  {
+    "model": "gemini-2.5-flash",
+    "success": true,
+    "response": "Here are a few synonyms for \"motorcycles\":\n\n*   **Bikes** (most common and informal)\n*   **Motorbikes**\n*   **Cycles**\n*   **Two-wheelers** (descriptive)\n*   **Hogs** (more colloquial, often referring to larger or cruiser-style motorcycles)"
+  },
+  {
+    "model": "gemini-flash-latest",
+    "success": true,
+    "response": "The most common synonym for motorcycles is **motorbikes**.\n\nDepending on the context, here are a few other options:\n\n*   **Bikes** (Informal/Common)\n*   **Cycles** (General)\n*   **Two-wheelers** (Technical/Descriptive)\n*   **Hogs** (Slang, usually referring to large motorcycles like Harleys)\n*   **Choppers** (Specifically referring to modified motorcycles)"
+  },
+  {
+    "model": "gemini-pro-latest",
+    "success": true,
+    "response": "**Motorbikes** \n\nOther alternatives depending on the context include:\n* Bikes\n* Two-wheelers\n* Choppers (specific style)\n* Cycles"
+  }
+]
