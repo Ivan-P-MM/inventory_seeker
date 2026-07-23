@@ -7,17 +7,17 @@
 CREATE TABLE IF NOT EXISTS advertiser_inventory (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   advertiser text NOT NULL,
-  domain text NOT NULL,
+  inventory_item text NOT NULL,
   created_at timestamptz DEFAULT now(),
-  UNIQUE (advertiser, domain)
+  UNIQUE (advertiser, inventory_item)
 );
 
 -- Indexes for fast lookup
 CREATE INDEX IF NOT EXISTS idx_advertiser_inventory_advertiser
   ON advertiser_inventory(advertiser);
 
-CREATE INDEX IF NOT EXISTS idx_advertiser_inventory_domain
-  ON advertiser_inventory(domain);
+CREATE INDEX IF NOT EXISTS idx_advertiser_inventory_item
+  ON advertiser_inventory(inventory_item);
 
 -- Enable Row Level Security
 ALTER TABLE advertiser_inventory ENABLE ROW LEVEL SECURITY;
