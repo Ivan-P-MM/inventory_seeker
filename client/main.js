@@ -6,6 +6,7 @@ const apiKeyInput = document.getElementById('api-key');
 const keywordInput = document.getElementById('keyword');
 const languageSelect = document.getElementById('language');
 const regionSelect = document.getElementById('region');
+const googleDomainSelect = document.getElementById('google-domain');
 const numResultsSelect = document.getElementById('num-results');
 const btnSearch = document.getElementById('btn-search');
 const toggleKeyBtn = document.getElementById('toggle-key');
@@ -51,6 +52,7 @@ async function performSearch() {
     const keyword = keywordInput.value.trim();
     const language = languageSelect.value;
     const region = regionSelect.value;
+    const googleDomain = googleDomainSelect.value;
     const numResults = parseInt(numResultsSelect.value, 10);
 
     if (!apiKey || !keyword) return;
@@ -62,7 +64,7 @@ async function performSearch() {
         const response = await fetch(`${API_URL}/api/search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ keyword, language, region, apiKey, numResults }),
+            body: JSON.stringify({ keyword, language, region, googleDomain, apiKey, numResults }),
         });
 
         if (!response.ok) {
