@@ -19,10 +19,10 @@ export async function POST(request) {
 
         const supabase = createServerClient();
 
-        // Check if the advertiser exists and has domains
-        const { data: domains, error: fetchError } = await supabase
+        // Check if the advertiser exists and has items
+        const { data: items, error: fetchError } = await supabase
             .from('advertiser_inventory')
-            .select('id, domain')
+            .select('id, inventory_item')
             .eq('advertiser', advertiserName.trim());
 
         if (fetchError) {
@@ -33,15 +33,15 @@ export async function POST(request) {
             );
         }
 
-        if (!domains || domains.length === 0) {
+        if (!items || items.length === 0) {
             return NextResponse.json({
                 success: true,
                 total: 0,
-                message: 'No domains found for this advertiser'
+                message: 'No items found for this advertiser'
             });
         }
 
-        // Reset the evaluation columns for all domains of this advertiser
+        // Reset the evaluation columns for all items of this advertiser
         const { error: updateError } = await supabase
             .from('advertiser_inventory')
             .update({
@@ -65,8 +65,8 @@ export async function POST(request) {
 
         return NextResponse.json({
             success: true,
-            total: domains.length,
-            message: `Successfully queued ${domains.length} domains for evaluation`
+            total: items.length,
+            message: `Successfully queued ${items.length} items for evaluation`
         });
     } catch (err) {
         console.error('Reevaluate start error:', err);
