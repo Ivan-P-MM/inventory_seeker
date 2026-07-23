@@ -11,7 +11,7 @@ export async function POST(request) {
 
         const supabase = createServerClient();
 
-        // Build array of terms to search for in result_description
+        // Build array of terms to search for in category
         const searchTerms = [keyword];
         if (topic) {
             searchTerms.push(topic);
@@ -33,10 +33,12 @@ export async function POST(request) {
         );
 
         // 2. Query domain_rating_repository
-        const { data: approvedData, error: searchError } = await supabase
-            .from('domain_rating_repository')
-            .select('*')
-            .overlaps('result_description', searchTerms);
+        let query = supabase.from('domain_rating_repository').select('*');
+        if (searchTerms.length > 0) {
+            query = query.overlaps('category', searchTerms);
+        }
+        
+        const { data: approvedData, error: searchError } = await query;
 
         if (searchError) {
             throw searchError;
@@ -54,24 +56,46 @@ export async function POST(request) {
             return Response.json({ count: 0, message: 'No internal results found (or all filtered by blacklist)' });
         }
 
-        // 4. Insert these into the current session's web_current_results
+        // 4. De-duplicate: fetch full domains already in this session to skip duplicates across iterations
+        const { data: existingData } = await supabase
+            .from('web_current_results')
+            .select('root_domain, subdomain')
+            .eq('session_id', sessionId);
+        const seenInSession = new Set(existingData?.map(r => {
+            const rootLower = r.root_domain?.toLowerCase() || '';
+            return r.subdomain ? `${r.subdomain.toLowerCase()}.${rootLower}` : rootLower;
+        }) || []);
+
+        // 5. Insert only genuinely new results into the current session's web_current_results
         const searchId = crypto.randomUUID();
-        const rowsToInsert = filteredData.map(row => ({
-            search_id: searchId,
-            session_id: sessionId,
-            keyword: keyword,
-            full_url: `https://${row.root_domain}${row.path || ''}`, // Reconstruct a basic URL
-            root_domain: row.root_domain,
-            subdomain: row.subdomain,
-            path: row.path,
-            display_path: `${row.subdomain || row.root_domain}${row.path || ''}`,
-            title: `Approved: ${row.root_domain}`, // We don't store title in domain_rating_repository right now
-            dv360_status: 'Approved',
-            rejection_reason: 'Pre-approved internal result',
-            ads_txt_payload: row.ads_txt_payload,
-            domain_rating: row.domain_rating,
-            // Ahrefs rank isn't in web_current_results currently, but DR is.
-        }));
+        const rowsToInsert = filteredData
+            .map(row => {
+                const rootLower = row.root_domain?.toLowerCase() || '';
+                const fullDomain = row.subdomain ? `${row.subdomain.toLowerCase()}.${rootLower}` : rootLower;
+                const displayPath = `${row.subdomain || row.root_domain}${row.path || ''}`;
+                return { fullDomain, displayPath, row };
+            })
+            .filter(({ fullDomain }) => !seenInSession.has(fullDomain))
+            .map(({ fullDomain, displayPath, row }) => ({
+                search_id: searchId,
+                session_id: sessionId,
+                keyword: keyword,
+                full_url: `https://${row.root_domain}${row.path || ''}`, // Reconstruct a basic URL
+                root_domain: row.root_domain,
+                subdomain: row.subdomain,
+                path: row.path,
+                display_path: displayPath,
+                title: `Approved: ${row.root_domain}`, // We don't store title in domain_rating_repository right now
+                dv360_status: 'Approved',
+                rejection_reason: 'Pre-approved internal result',
+                ads_txt_payload: row.ads_txt_payload,
+                domain_rating: row.domain_rating,
+                // Ahrefs rank isn't in web_current_results currently, but DR is.
+            }));
+
+        if (rowsToInsert.length === 0) {
+            return Response.json({ count: 0, searchId, message: 'All internal results already exist in this session' });
+        }
 
         const { error: insertError } = await supabase
             .from('web_current_results')
