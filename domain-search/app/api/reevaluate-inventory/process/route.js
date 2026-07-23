@@ -3,23 +3,19 @@ import { createServerClient } from '@/lib/supabase';
 import { parseAdsTxt } from '@/lib/parseAdsTxt';
 import { gotScraping } from 'got-scraping';
 
-const AHREFS_API_KEY = process.env.AHREFS_API_KEY;
-const AHREFS_DR_URL = 'https://api.ahrefs.com/v3/site-explorer/domain-rating';
+const AHREFS_DR_URL = 'https://api.ahrefs.com/v3/public/domain-rating-free';
 
 /**
  * Fetch Domain Rating for a single domain from Ahrefs.
  * Returns { domain_rating, ahrefs_rank } or throws on error.
  */
 async function fetchDR(domain) {
-    if (!AHREFS_API_KEY) {
-        throw new Error('AHREFS_API_KEY not configured');
-    }
+
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const url = `${AHREFS_DR_URL}?target=${encodeURIComponent(domain)}&date=${today}`;
 
     const res = await fetch(url, {
         headers: {
-            Authorization: `Bearer ${AHREFS_API_KEY}`,
             Accept: 'application/json',
         },
     });
@@ -80,9 +76,9 @@ export async function POST(request) {
 
         const processedResults = [];
 
-        // 2. Process each domain in the batch
+        // 2. Process each item in the batch
         for (const row of rows) {
-            const domain = row.domain;
+            const domain = row.inventory_item;
             let adsTxtCompliant = false;
             let adsTxtPayload = null;
             let rejectionReason = null;
