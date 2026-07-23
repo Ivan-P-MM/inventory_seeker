@@ -1,7 +1,7 @@
 import { createServerClient } from '@/lib/supabase';
+import { categorizeDomain } from '@/lib/gemini-categorizer';
 
-const AHREFS_API_KEY = process.env.AHREFS_API_KEY;
-const AHREFS_DR_URL = 'https://api.ahrefs.com/v3/site-explorer/domain-rating';
+const AHREFS_DR_URL = 'https://api.ahrefs.com/v3/public/domain-rating-free';
 
 /**
  * Fetch Domain Rating for a single domain from Ahrefs.
@@ -13,7 +13,6 @@ async function fetchDR(domain) {
 
     const res = await fetch(url, {
         headers: {
-            Authorization: `Bearer ${AHREFS_API_KEY}`,
             Accept: 'application/json',
         },
     });
@@ -38,9 +37,7 @@ async function fetchDR(domain) {
  */
 export async function POST(request) {
     try {
-        if (!AHREFS_API_KEY) {
-            return Response.json({ error: 'AHREFS_API_KEY not configured' }, { status: 500 });
-        }
+
 
         const body = await request.json();
         const supabase = createServerClient();
@@ -115,6 +112,10 @@ export async function POST(request) {
                 updated++;
                 // If it remained Approved, it means it passed both Ads.txt and DR check
                 if (status === 'Approved' && domain_rating !== null) {
+                    const geminiCategory = await categorizeDomain(row.root_domain, supabase);
+                    // Use Gemini category, falling back to [keyword, topic] if null
+                    const categoryArr = geminiCategory ? [geminiCategory] : [keyword, topic].filter(Boolean);
+
                     newlyApprovedToSave.push({
                         root_domain: row.root_domain,
                         subdomain: row.subdomain,
@@ -122,7 +123,7 @@ export async function POST(request) {
                         ads_txt_payload: row.ads_txt_payload,
                         domain_rating: domain_rating,
                         ahrefs_rank: ahrefs_rank,
-                        result_description: [keyword, topic].filter(Boolean)
+                        category: categoryArr
                     });
                 }
             }
