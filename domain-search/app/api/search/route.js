@@ -19,7 +19,7 @@ const EXCLUDED_DOMAINS = [
  */
 export async function POST(request) {
     try {
-        const { keyword, language = 'en', sessionId, advertiserName } = await request.json();
+        const { keyword, language = 'en', gl = 'us', googleDomain = 'google.com', sessionId, advertiserName } = await request.json();
 
         if (!keyword || !sessionId) {
             return NextResponse.json(
@@ -38,10 +38,8 @@ export async function POST(request) {
 
         const supabase = createServerClient();
 
-        // 1. Get existing display_paths for this session to ensure global uniqueness
-        // Also fetch persistent blacklist and advertiser domains
         const fetchPromises = [
-            supabase.from('web_current_results').select('display_path').eq('session_id', sessionId),
+            supabase.from('web_current_results').select('root_domain, subdomain').eq('session_id', sessionId),
             supabase.from('blacklist').select('domain'),
         ];
 
@@ -56,7 +54,10 @@ export async function POST(request) {
         const [{ data: existingData }, { data: blacklistData }] = results;
         const advertiserDomainData = advertiserName ? results[2]?.data : null;
         
-        const seenInSession = new Set(existingData?.map(r => r.display_path) || []);
+        const seenInSession = new Set(existingData?.map(r => {
+            const rootLower = r.root_domain?.toLowerCase() || '';
+            return r.subdomain ? `${r.subdomain.toLowerCase()}.${rootLower}` : rootLower;
+        }) || []);
         const persistentBlacklist = new Set(blacklistData?.map(b => b.domain.toLowerCase()) || []);
         const advertiserDomains = new Set(advertiserDomainData?.map(d => d.domain.toLowerCase()) || []);
 
@@ -71,6 +72,8 @@ export async function POST(request) {
                 engine: 'google',
                 q: keyword,
                 hl: language,
+                gl: gl,
+                google_domain: googleDomain,
                 start: start.toString(),
                 num: '10',
             });
@@ -103,10 +106,10 @@ export async function POST(request) {
 
                 if (isExcluded) continue;
 
-                // 3. Uniqueness based on display_path
+                // 3. Uniqueness based on full domain (subdomain + root)
                 const dPath = parsed.display_path;
-                if (!seenInBatch.has(dPath) && !seenInSession.has(dPath)) {
-                    seenInBatch.add(dPath);
+                if (!seenInBatch.has(fullDomain) && !seenInSession.has(fullDomain)) {
+                    seenInBatch.add(fullDomain);
                     allResults.push({
                         search_id: searchId,
                         session_id: sessionId,
