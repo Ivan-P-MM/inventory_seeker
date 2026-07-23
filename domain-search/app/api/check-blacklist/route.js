@@ -56,11 +56,11 @@ export async function POST(request) {
         const supabase = createServerClient();
         const { data: localBlacklist } = await supabase
             .from('blacklist')
-            .select('domain');
+            .select('inventory_item');
 
         if (localBlacklist) {
             localBlacklist.forEach(item => {
-                blockedDomains.add(item.domain.toLowerCase().trim());
+                blockedDomains.add(item.inventory_item.toLowerCase().trim());
             });
         }
 
