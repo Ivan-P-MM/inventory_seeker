@@ -72,11 +72,12 @@ function parseUrl(urlString) {
 /**
  * Fetch one page of Google results from SerpAPI.
  */
-async function fetchSerpApiPage(apiKey, keyword, language, region, start) {
+async function fetchSerpApiPage(apiKey, keyword, language, region, googleDomain, start) {
   const params = new URLSearchParams({
     q: keyword,
     hl: language,
     gl: region,
+    google_domain: googleDomain,
     start: start.toString(),
     num: '10',
     engine: 'google',
@@ -98,7 +99,7 @@ async function fetchSerpApiPage(apiKey, keyword, language, region, start) {
  * Body: { keyword, language, region, apiKey, numResults }
  */
 app.post('/api/search', async (req, res) => {
-  const { keyword, language = 'pl', region = 'pl', apiKey, numResults = 100 } = req.body;
+  const { keyword, language = 'pl', region = 'pl', googleDomain = 'google.com', apiKey, numResults = 100 } = req.body;
 
   if (!keyword || !apiKey) {
     return res.status(400).json({ error: 'keyword and apiKey are required.' });
@@ -110,7 +111,7 @@ app.post('/api/search', async (req, res) => {
 
     for (let page = 0; page < totalPages; page++) {
       const start = page * 10;
-      const data = await fetchSerpApiPage(apiKey, keyword, language, region, start);
+      const data = await fetchSerpApiPage(apiKey, keyword, language, region, googleDomain, start);
 
       const organicResults = data.organic_results || [];
 
