@@ -77,14 +77,14 @@ CREATE POLICY "Allow all access" ON domain_rating_repository
 
 CREATE TABLE IF NOT EXISTS blacklist (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  domain text NOT NULL UNIQUE,
+  inventory_item text NOT NULL UNIQUE,
   reason text,
   created_at timestamptz DEFAULT now()
 );
 
 -- Indexes for fast lookup
-CREATE INDEX IF NOT EXISTS idx_blacklist_domain
-  ON blacklist(domain);
+CREATE INDEX IF NOT EXISTS idx_blacklist_inventory_item
+  ON blacklist(inventory_item);
 
 -- Enable Row Level Security
 ALTER TABLE blacklist ENABLE ROW LEVEL SECURITY;
