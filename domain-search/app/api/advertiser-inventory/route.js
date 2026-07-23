@@ -8,21 +8,39 @@ export async function GET() {
     try {
         const supabase = createServerClient();
 
-        const { data, error } = await supabase
+        // 1. Fetch advertiser inventory
+        const { data: invData, error: invError } = await supabase
             .from('advertiser_inventory')
             .select('*')
             .order('advertiser', { ascending: true })
             .order('created_at', { ascending: true });
 
-        if (error) throw error;
+        if (invError) throw invError;
+
+        // 2. Fetch domain_rating_repository categories
+        const { data: ratingData, error: ratingError } = await supabase
+            .from('domain_rating_repository')
+            .select('root_domain, category');
+            
+        if (ratingError) throw ratingError;
+        
+        const categoryMap = {};
+        for (const row of ratingData || []) {
+            if (row.root_domain && row.category) {
+                // category might be stored as array, handle array or string
+                categoryMap[row.root_domain] = Array.isArray(row.category) ? row.category.join(' / ') : row.category;
+            }
+        }
 
         // Group by advertiser name
         const map = {};
-        for (const row of data || []) {
+        for (const row of invData || []) {
             if (!map[row.advertiser]) {
-                map[row.advertiser] = { name: row.advertiser, domains: [], oldestCreatedAt: row.created_at };
+                map[row.advertiser] = { name: row.advertiser, inventory_items: [], inventory_item_dates: {}, inventory_item_categories: {}, oldestCreatedAt: row.created_at };
             }
-            map[row.advertiser].domains.push(row.domain);
+            map[row.advertiser].inventory_items.push(row.inventory_item);
+            map[row.advertiser].inventory_item_dates[row.inventory_item] = row.created_at;
+            map[row.advertiser].inventory_item_categories[row.inventory_item] = categoryMap[row.inventory_item] || '';
         }
 
         return Response.json(Object.values(map));
@@ -35,18 +53,18 @@ export async function GET() {
  * POST /api/advertiser-inventory
  * Upserts a full advertiser profile (name + whitelist of domains).
  * Replaces all existing domains for that advertiser.
- * Body: { name: string, domains: string[] }
+ * Body: { name: string, inventory_items: string[] }
  */
 export async function POST(request) {
     try {
-        const { name, domains } = await request.json();
+        const { name, inventory_items } = await request.json();
 
         if (!name || !name.trim()) {
             return Response.json({ error: 'Advertiser name is required' }, { status: 400 });
         }
 
         const advertiserName = name.trim();
-        const cleanDomains = (domains || [])
+        const cleanDomains = (inventory_items || [])
             .map(d => d.trim().toLowerCase())
             .filter(d => d.length > 0);
 
@@ -71,7 +89,7 @@ export async function POST(request) {
         }
 
         if (dedupedDomains.length > 0) {
-            const rows = dedupedDomains.map(domain => ({ advertiser: advertiserName, domain }));
+            const rows = dedupedDomains.map(inventory_item => ({ advertiser: advertiserName, inventory_item }));
             const { error: insertError } = await supabase
                 .from('advertiser_inventory')
                 .insert(rows);
