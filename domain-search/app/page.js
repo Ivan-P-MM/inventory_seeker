@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { createBrowserClient } from '@/lib/supabase';
 import { parseUrl } from '@/lib/parseUrl';
+import { GL_OPTIONS, GOOGLE_DOMAIN_OPTIONS, HL_OPTIONS } from '@/lib/serpApiOptions';
 
 // Uniform Iconography (Outline style, 1.5px stroke weight)
 const SearchIcon = () => (
@@ -94,7 +95,7 @@ const DRBadge = ({ value }) => {
 };
 
 // ── Reevaluation Modal ──────────────────────────────────────────────────
-const ReevaluationModal = ({ advertiserName, onClose }) => {
+const ReevaluationModal = ({ advertiserName, domains, onClose, onUpdateWhitelist }) => {
     const [minimalDr, setMinimalDr] = useState(30);
     const [phase, setPhase] = useState('idle'); // 'idle' | 'running' | 'done' | 'error'
     const [errorMsg, setErrorMsg] = useState('');
@@ -136,10 +137,14 @@ const ReevaluationModal = ({ advertiserName, onClose }) => {
         setCheckedDomains({});
 
         try {
-            const startRes = await fetch('/api/reevaluate-inventory/start', {
+            const isBulk = Array.isArray(domains) && domains.length > 0;
+            const startEndpoint = isBulk ? '/api/reevaluate-inventory/start-domains' : '/api/reevaluate-inventory/start';
+            const startBody = isBulk ? { domains } : { advertiserName };
+
+            const startRes = await fetch(startEndpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ advertiserName })
+                body: JSON.stringify(startBody)
             });
             const startData = await startRes.json();
             if (startData.error) {
@@ -159,10 +164,13 @@ const ReevaluationModal = ({ advertiserName, onClose }) => {
             let allResults = [];
 
             while (remaining > 0) {
-                const processRes = await fetch('/api/reevaluate-inventory/process', {
+                const processEndpoint = isBulk ? '/api/reevaluate-inventory/process-domains' : '/api/reevaluate-inventory/process';
+                const processBody = isBulk ? { domains, minimalDr } : { advertiserName, minimalDr };
+
+                const processRes = await fetch(processEndpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ advertiserName, minimalDr })
+                    body: JSON.stringify(processBody)
                 });
 
                 if (!processRes.ok) {
@@ -211,21 +219,15 @@ const ReevaluationModal = ({ advertiserName, onClose }) => {
     const updateWhitelist = async () => {
         setIsUpdatingWhitelist(true);
         try {
-            const domains = Object.entries(checkedDomains)
-                .filter(([_, checked]) => checked)
+            // Collect domains that are NOT checked (rejected / user-unchecked)
+            const rejectedDomains = Object.entries(checkedDomains)
+                .filter(([_, checked]) => !checked)
                 .map(([domain]) => domain);
 
-            const res = await fetch('/api/advertiser-inventory', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: advertiserName, domains })
-            });
-            const data = await res.json();
-            if (data.error) {
-                alert('Failed to update whitelist: ' + data.error);
-            } else {
-                onClose();
+            if (onUpdateWhitelist) {
+                await onUpdateWhitelist(rejectedDomains);
             }
+            onClose();
         } catch (err) {
             alert('Failed to update whitelist: ' + err.message);
         } finally {
@@ -284,7 +286,11 @@ const ReevaluationModal = ({ advertiserName, onClose }) => {
                             Reevaluation Pipeline
                         </h2>
                         <div style={{ fontSize: '0.8rem', color: 'var(--foreground-muted)', marginTop: '2px' }}>
-                            Profile: <strong style={{ color: 'var(--foreground)' }}>{advertiserName}</strong>
+                            {Array.isArray(domains) && domains.length > 0 ? (
+                                <>Bulk Reevaluation: <strong style={{ color: 'var(--foreground)' }}>{domains.length} domains</strong></>
+                            ) : (
+                                <>Profile: <strong style={{ color: 'var(--foreground)' }}>{advertiserName}</strong></>
+                            )}
                         </div>
                     </div>
                     {phase !== 'running' && (
@@ -569,7 +575,7 @@ const ReevaluationModal = ({ advertiserName, onClose }) => {
                     )}
                     {(phase === 'done' || phase === 'error') && (
                         <>
-                            {phase === 'done' && (
+                            {phase === 'done' && results.length > 0 && (
                                 <button 
                                     onClick={updateWhitelist}
                                     disabled={isUpdatingWhitelist}
@@ -634,7 +640,9 @@ export default function Home() {
         topic: '',
         minimalDr: 30,
         targetCount: 10,
-        language: 'pl',
+        language: 'de',
+        googleDomain: 'google.de',
+        gl: 'de',
         sessionId: null,
         isRunning: false,
         logs: [],
@@ -647,6 +655,7 @@ export default function Home() {
 
     const [webState, setWebState] = useState(initialPipelineState);
     const [activeTab, setActiveTab] = useState('Web Pipeline');
+    const [activeSettingsTab, setActiveSettingsTab] = useState('Inventory categories');
 
     // Helper to get active pipeline state
     const current = webState;
@@ -654,7 +663,7 @@ export default function Home() {
 
     // Destructure for easy access in JSX (minimizes changes to the rest of the file)
     const { 
-        keyword, topic, minimalDr, targetCount, language, sessionId, 
+        keyword, topic, minimalDr, targetCount, language, googleDomain, gl, sessionId, 
         isRunning, logs, results, status, meta, isNewAdvertiser, 
         pipelineAdvertiserName 
     } = current;
@@ -665,6 +674,8 @@ export default function Home() {
     const setMinimalDr = (val) => setCurrent(s => ({ ...s, minimalDr: val }));
     const setTargetCount = (val) => setCurrent(s => ({ ...s, targetCount: val }));
     const setLanguage = (val) => setCurrent(s => ({ ...s, language: val }));
+    const setGoogleDomain = (val) => setCurrent(s => ({ ...s, googleDomain: val }));
+    const setGl = (val) => setCurrent(s => ({ ...s, gl: val }));
     const setSessionId = (val) => setCurrent(s => ({ ...s, sessionId: val }));
     const setIsRunning = (val) => setCurrent(s => ({ ...s, isRunning: val }));
     const setLogs = (val) => setCurrent(s => ({ ...s, logs: typeof val === 'function' ? val(s.logs) : val }));
@@ -682,18 +693,16 @@ export default function Home() {
     const [blacklistText, setBlacklistText] = useState('');
     const [isSavingBl, setIsSavingBl] = useState(false);
 
-    // Advertiser State
-    const [advertisers, setAdvertisers] = useState([]);
-    const [selectedAdvertiserId, setSelectedAdvertiserId] = useState(null);
-    const [advertiserMode, setAdvertiserMode] = useState('existing'); // 'existing' | 'new'
-    const [newAdvertiserName, setNewAdvertiserName] = useState('');
-    const [activeAdvertiser, setActiveAdvertiser] = useState(null); // for Advertisers tab
-    const [advDomainsText, setAdvDomainsText] = useState('');
-    const [isSavingAdv, setIsSavingAdv] = useState(false);
-    const [newAdvInputName, setNewAdvInputName] = useState(''); // for creating in Advertisers tab
+    // Settings / Categories State
+    const [categoriesText, setCategoriesText] = useState('');
+    const [isSavingCategories, setIsSavingCategories] = useState(false);
+
+
 
     // Advertiser Inventory State (advertiser_inventory table)
     const [inventoryProfiles, setInventoryProfiles] = useState([]); // [{ name, domains[] }]
+    const [whitelistSort, setWhitelistSort] = useState('domain_asc');
+    const [whitelistFilterAdvertiser, setWhitelistFilterAdvertiser] = useState('All');
     const [selectedProfileName, setSelectedProfileName] = useState(null);
     const [editName, setEditName] = useState('');
     const [editDomains, setEditDomains] = useState('');
@@ -704,8 +713,13 @@ export default function Home() {
     // Reevaluation Modal State
     const [reevalModalOpen, setReevalModalOpen] = useState(false);
 
+    // Whitelist Selection State
+    const [selectedWhitelistDomains, setSelectedWhitelistDomains] = useState(new Set());
+    const [whitelistReevalDomains, setWhitelistReevalDomains] = useState(null);
+
     const supabase = createBrowserClient();
     const logsEndRef = useRef(null);
+    const lastCheckedWhitelistIdx = useRef(null);
 
     // Auto-scroll logs
     useEffect(() => {
@@ -741,19 +755,19 @@ export default function Home() {
     // Fetch Blacklist
     const fetchBlacklist = async () => {
         try {
-            const data = await fetch('/api/blacklist').then(r => r.json());
+            const data = await fetch('/api/exclusions').then(r => r.json());
             if (Array.isArray(data)) {
                 if (data.length === 0) {
                     // Seed with defaults
                     const defaults = ['youtube.com', 'reddit.com', 'facebook.com', 'youtu.be', 'instagram.com', 'twitter.com', 'x.com'];
-                    await fetch('/api/blacklist/bulk', {
+                    await fetch('/api/exclusions/bulk', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ domains: defaults })
+                        body: JSON.stringify({ inventory_items: defaults })
                     });
                     setBlacklistText(defaults.join('\n'));
                 } else {
-                    setBlacklistText(data.map(d => d.domain).join('\n'));
+                    setBlacklistText(data.map(d => d.inventory_item).filter(Boolean).join('\n'));
                 }
             }
         } catch (e) {
@@ -761,21 +775,25 @@ export default function Home() {
         }
     };
 
+    const fetchCategories = async () => {
+        try {
+            const res = await fetch('/api/categories');
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                setCategoriesText(data.map(d => d.category_name).join('\n'));
+            }
+        } catch (err) {
+            console.error('Failed to load categories', err);
+        }
+    };
+
     useEffect(() => {
         fetchBlacklist();
-        fetchAdvertisers();
+        fetchCategories();
         fetchInventoryProfiles();
     }, []);
 
-    // Fetch Advertisers
-    const fetchAdvertisers = async () => {
-        try {
-            const data = await fetch('/api/advertisers').then(r => r.json());
-            if (Array.isArray(data)) setAdvertisers(data);
-        } catch (e) {
-            console.error('Failed to fetch advertisers:', e);
-        }
-    };
+
 
     // ── Advertiser Inventory (advertiser_inventory table) ────────────────────
     const fetchInventoryProfiles = async () => {
@@ -822,7 +840,7 @@ export default function Home() {
             const res = await fetch('/api/advertiser-inventory', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: editName.trim(), domains }),
+                body: JSON.stringify({ name: editName.trim(), inventory_items: domains }),
             });
             const data = await res.json();
             if (data.error) { alert(data.error); return; }
@@ -862,7 +880,7 @@ export default function Home() {
     const selectInventoryProfile = (profile) => {
         setSelectedProfileName(profile.name);
         setEditName(profile.name);
-        setEditDomains(profile.domains.join('\n'));
+        setEditDomains(profile.inventory_items.join('\n'));
         setIsNewProfile(false);
     };
 
@@ -873,83 +891,15 @@ export default function Home() {
         setIsNewProfile(true);
     };
 
-    const createAdvertiser = async (name) => {
-        if (!name?.trim()) return null;
-        try {
-            const res = await fetch('/api/advertisers', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: name.trim() })
-            });
-            const data = await res.json();
-            if (data.error) { alert(data.error); return null; }
-            await fetchAdvertisers();
-            return data;
-        } catch (e) {
-            console.error('Failed to create advertiser:', e);
-            return null;
-        }
-    };
 
-    const deleteAdvertiser = async (advId) => {
-        if (!confirm('Delete this advertiser and all its domains?')) return;
-        try {
-            await fetch('/api/advertisers', {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: advId })
-            });
-            if (activeAdvertiser?.id === advId) {
-                setActiveAdvertiser(null);
-                setAdvDomainsText('');
-            }
-            if (selectedAdvertiserId === advId) setSelectedAdvertiserId(null);
-            await fetchAdvertisers();
-        } catch (e) {
-            console.error('Failed to delete advertiser:', e);
-        }
-    };
-
-    const loadAdvertiserDomains = async (adv) => {
-        setActiveAdvertiser(adv);
-        try {
-            const data = await fetch(`/api/advertisers/${adv.id}/domains`).then(r => r.json());
-            if (Array.isArray(data)) {
-                setAdvDomainsText(data.map(d => d.domain).join('\n'));
-            }
-        } catch (e) {
-            console.error('Failed to load advertiser domains:', e);
-        }
-    };
-
-    const saveAdvertiserDomains = async () => {
-        if (!activeAdvertiser) return;
-        setIsSavingAdv(true);
-        const domains = advDomainsText
-            .split(/[\n,]+/)
-            .map(d => d.trim().toLowerCase())
-            .filter(d => d.length > 0);
-        try {
-            await fetch(`/api/advertisers/${activeAdvertiser.id}/domains/bulk`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ domains })
-            });
-            await fetchAdvertisers();
-        } catch (e) {
-            console.error('Failed to save advertiser domains:', e);
-        } finally {
-            setIsSavingAdv(false);
-        }
-    };
 
     const handleBlacklistSingle = async (domain, id) => {
         try {
             // 1. Add to persistent blacklist
-            await fetch('/api/blacklist', {
+            await fetch('/api/exclusions', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ domain, reason: 'Manual blacklist from results' })
+                body: JSON.stringify({ inventory_item: domain, reason: 'Manual blacklist from results' })
             });
 
             // 2. Update web_current_results in DB
@@ -977,52 +927,37 @@ export default function Home() {
 
     const saveBlacklist = async () => {
         setIsSavingBl(true);
-        const allDomains = blacklistText
-            .split(/[\n,]+/)
-            .map(d => d.trim().toLowerCase().replace(/ /g, ''))
-            .filter(d => d.length > 0);
-
-        // Deduplicate exact matches client-side
-        const seen = new Set();
-        const domains = [];
-        for (const d of allDomains) {
-            if (!seen.has(d)) {
-                seen.add(d);
-                domains.push(d);
-            }
-        }
-
-        // Sort alphabetically and update textarea immediately
-        domains.sort();
-        setBlacklistText(domains.join('\n'));
-        
         try {
-            await fetch('/api/blacklist/bulk', {
+            const items = blacklistText.split(/[\n,]+/).map(d => d.trim()).filter(d => d.length > 0);
+            const res = await fetch('/api/exclusions/bulk', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ domains })
+                body: JSON.stringify({ inventory_items: items })
             });
-            await fetchBlacklist();
-        } catch (e) {
-            console.error('Failed to save blacklist', e);
+            if (!res.ok) throw new Error('Failed to save blacklist');
+            alert('Blacklist saved successfully.');
+        } catch (err) {
+            alert(err.message);
         } finally {
             setIsSavingBl(false);
         }
     };
 
-    const handleSaveToAdvertiser = async (domain) => {
-        const targetId = selectedAdvertiserId;
-        if (!targetId) { alert('Please select an advertiser in Pipeline Controls first.'); return; }
+    const saveCategories = async () => {
+        setIsSavingCategories(true);
         try {
-            await fetch(`/api/advertisers/${targetId}/domains`, {
+            const items = categoriesText.split(/[\n,]+/).map(d => d.trim()).filter(d => d.length > 0);
+            const res = await fetch('/api/categories', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ domain })
+                body: JSON.stringify({ categories: items })
             });
-            await fetchAdvertisers();
-            addLog(`💾 Saved ${domain} to advertiser profile.`);
-        } catch (e) {
-            console.error('Failed to save domain to advertiser:', e);
+            if (!res.ok) throw new Error('Failed to save categories');
+            alert('Categories saved successfully.');
+        } catch (err) {
+            alert(err.message);
+        } finally {
+            setIsSavingCategories(false);
         }
     };
 
@@ -1079,7 +1014,7 @@ export default function Home() {
                 updateP({ status: `Searching Web: ${currentKeyword}` });
                 const searchRes = await fetch('/api/search', {
                     method: 'POST',
-                    body: JSON.stringify({ keyword: currentKeyword, language: stateAtStart.language, sessionId: sid, advertiserName: advName }),
+                    body: JSON.stringify({ keyword: currentKeyword, language: stateAtStart.language, gl: stateAtStart.gl, googleDomain: stateAtStart.googleDomain, sessionId: sid, advertiserName: advName }),
                 }).then(r => r.json());
 
                 if (searchRes.error) throw new Error(searchRes.error);
@@ -1209,6 +1144,73 @@ export default function Home() {
         );
     };
 
+    // Merge & deduplicate all inventory items across all advertisers for Whitelist tab
+    const mergedWhitelistItems = useMemo(() => {
+        let itemsMap = new Map(); // domain -> { domain, latestDate, owners: Set }
+        
+        inventoryProfiles.forEach(p => {
+            (p.inventory_items || []).forEach(item => {
+                let existing = itemsMap.get(item);
+                const d = p.inventory_item_dates?.[item];
+                const dateObj = d ? new Date(d) : null;
+                const cat = p.inventory_item_categories?.[item];
+                
+                if (!existing) {
+                    existing = { domain: item, latestDate: dateObj, owners: new Set([p.name]), category: cat || '' };
+                    itemsMap.set(item, existing);
+                } else {
+                    existing.owners.add(p.name);
+                    if (dateObj && (!existing.latestDate || dateObj > existing.latestDate)) {
+                        existing.latestDate = dateObj;
+                    }
+                    if (!existing.category && cat) {
+                        existing.category = cat;
+                    }
+                }
+            });
+        });
+
+        let items = Array.from(itemsMap.values());
+
+        // Filter
+        if (whitelistFilterAdvertiser !== 'All') {
+            items = items.filter(item => item.owners.has(whitelistFilterAdvertiser));
+        }
+
+        // Sort
+        items.sort((a, b) => {
+            if (whitelistSort === 'domain_asc') {
+                return a.domain.localeCompare(b.domain);
+            } else if (whitelistSort === 'domain_desc') {
+                return b.domain.localeCompare(a.domain);
+            } else if (whitelistSort === 'date_asc') {
+                if (!a.latestDate) return 1;
+                if (!b.latestDate) return -1;
+                return a.latestDate - b.latestDate;
+            } else if (whitelistSort === 'date_desc') {
+                if (!a.latestDate) return 1;
+                if (!b.latestDate) return -1;
+                return b.latestDate - a.latestDate;
+            }
+            return 0;
+        });
+
+        return items.map(item => {
+            let daysSince = '—';
+            if (item.latestDate) {
+                const now = new Date();
+                const diffTime = Math.abs(now - item.latestDate);
+                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                daysSince = diffDays.toString();
+            }
+            return {
+                ...item,
+                owners: Array.from(item.owners),
+                daysSince
+            };
+        });
+    }, [inventoryProfiles, whitelistSort, whitelistFilterAdvertiser]);
+
     return (
         <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
             {/* Top Navigation - F-Pattern */}
@@ -1242,7 +1244,7 @@ export default function Home() {
                     </div>
                     
                     <nav style={{ display: 'flex', gap: '1.5rem', color: 'var(--foreground-muted)', fontSize: '0.875rem', fontWeight: 500 }}>
-                        {['Web Pipeline', 'Advertisers', 'Blacklist'].map(tab => (
+                        {['Web Pipeline', 'Advertisers', 'Whitelist', 'Settings'].map(tab => (
                             <a 
                                 key={tab}
                                 href="#" 
@@ -1339,6 +1341,48 @@ export default function Home() {
                                     />
                                 </div>
 
+                                <div style={{ marginBottom: '1.25rem' }}>
+                                    <label className="label-small">Google Domain</label>
+                                    <select 
+                                        className="input-field"
+                                        value={googleDomain}
+                                        onChange={(e) => setGoogleDomain(e.target.value)}
+                                        disabled={isRunning}
+                                    >
+                                        {GOOGLE_DOMAIN_OPTIONS.map(opt => (
+                                            <option key={opt} value={opt}>{opt}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div style={{ marginBottom: '1.25rem' }}>
+                                    <label className="label-small">Country (gl)</label>
+                                    <select 
+                                        className="input-field"
+                                        value={gl}
+                                        onChange={(e) => setGl(e.target.value)}
+                                        disabled={isRunning}
+                                    >
+                                        {GL_OPTIONS.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div style={{ marginBottom: '1.25rem' }}>
+                                    <label className="label-small">Language (hl)</label>
+                                    <select 
+                                        className="input-field"
+                                        value={language}
+                                        onChange={(e) => setLanguage(e.target.value)}
+                                        disabled={isRunning}
+                                    >
+                                        {HL_OPTIONS.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
 
                                 <div style={{ marginBottom: '2rem' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
@@ -1362,7 +1406,7 @@ export default function Home() {
                                     >
                                         <option value="">-- Select Advertiser --</option>
                                         {inventoryProfiles.map(p => (
-                                            <option key={p.name} value={p.name}>{p.name} ({p.domains.length} domains)</option>
+                                            <option key={p.name} value={p.name}>{p.name} ({p.inventory_items.length} items)</option>
                                         ))}
                                     </select>
                                 </div>
@@ -1546,52 +1590,6 @@ export default function Home() {
                             </section>
                         </div>
                     </div>
-                ) : activeTab === 'Blacklist' ? (
-                    <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-                        <section className="card" style={{ padding: '2rem' }}>
-                            <div style={{ marginBottom: '1.5rem', borderBottom: '2px solid var(--accent)', paddingBottom: '1rem', display: 'inline-block' }}>
-                                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Exclude</h3>
-                            </div>
-                            
-                            <div style={{ border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '1rem' }}>
-                                <p style={{ fontSize: '0.875rem', color: 'var(--foreground-muted)', marginBottom: '1rem' }}>
-                                    Enter a list of domains to exclude, either one item to a line or separated by commas.
-                                </p>
-                                
-                                <textarea
-                                    className="input-field scrollbar-thin"
-                                    value={blacklistText}
-                                    onChange={(e) => setBlacklistText(e.target.value)}
-                                    style={{ 
-                                        width: '100%', 
-                                        minHeight: '400px', 
-                                        resize: 'vertical',
-                                        fontFamily: 'var(--font-mono, monospace)',
-                                        fontSize: '0.875rem',
-                                        lineHeight: 1.5,
-                                        padding: '0.75rem',
-                                        border: '1px solid var(--divider)',
-                                        borderRadius: '4px'
-                                    }}
-                                    placeholder="youtube.com&#10;reddit.com&#10;facebook.com"
-                                />
-                                
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem' }}>
-                                    <div style={{ fontSize: '0.75rem', color: 'var(--foreground-muted)' }}>
-                                        {blacklistText.split(/[\n,]+/).filter(d => d.trim().length > 0).length} domains listed
-                                    </div>
-                                    <button 
-                                        className="button-primary" 
-                                        onClick={saveBlacklist}
-                                        disabled={isSavingBl}
-                                        style={{ padding: '0.5rem 2rem' }}
-                                    >
-                                        {isSavingBl ? 'Saving...' : 'Save Blacklist'}
-                                    </button>
-                                </div>
-                            </div>
-                        </section>
-                    </div>
                 ) : activeTab === 'Advertisers' ? (
                     <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '2rem', alignItems: 'start' }}>
 
@@ -1623,7 +1621,7 @@ export default function Home() {
                                         <div>
                                             <div className="name">{profile.name}</div>
                                             <div style={{ fontSize: '0.7rem', color: 'var(--foreground-muted)', marginTop: '2px' }}>
-                                                {profile.domains.length} domain{profile.domains.length !== 1 ? 's' : ''}
+                                                {profile.inventory_items.length} item{profile.inventory_items.length !== 1 ? 's' : ''}
                                             </div>
                                         </div>
                                         <button
@@ -1755,6 +1753,269 @@ export default function Home() {
                             )}
                         </section>
                     </div>
+                ) : activeTab === 'Whitelist' ? (
+                    <div style={{ maxWidth: '900px', margin: '0 auto' }}>
+                        <section className="card" style={{ padding: '2rem' }}>
+                            <div style={{ marginBottom: '1.5rem', borderBottom: '2px solid var(--accent)', paddingBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Combined Whitelist</h3>
+                                <span style={{ fontSize: '0.75rem', color: 'var(--foreground-muted)', background: 'var(--surface-raised, var(--divider))', padding: '0.25rem 0.75rem', borderRadius: '999px' }}>
+                                    {mergedWhitelistItems.length} unique domain{mergedWhitelistItems.length !== 1 ? 's' : ''}
+                                </span>
+                            </div>
+
+                            <p style={{ fontSize: '0.85rem', color: 'var(--foreground-muted)', marginBottom: '1.25rem', lineHeight: 1.5 }}>
+                                Merged whitelist across all {inventoryProfiles.length} advertiser profile{inventoryProfiles.length !== 1 ? 's' : ''}. Duplicates are removed automatically.
+                            </p>
+
+                            <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1 }}>
+                                    <label className="label-small">Filter by Advertiser</label>
+                                    <select 
+                                        className="input-field" 
+                                        value={whitelistFilterAdvertiser} 
+                                        onChange={e => setWhitelistFilterAdvertiser(e.target.value)}
+                                        style={{ width: '100%' }}
+                                    >
+                                        <option value="All">All Advertisers</option>
+                                        {inventoryProfiles.map(p => (
+                                            <option key={p.name} value={p.name}>{p.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1 }}>
+                                    <label className="label-small">Sort By</label>
+                                    <select 
+                                        className="input-field" 
+                                        value={whitelistSort} 
+                                        onChange={e => setWhitelistSort(e.target.value)}
+                                        style={{ width: '100%' }}
+                                    >
+                                        <option value="domain_asc">Domain (A-Z)</option>
+                                        <option value="domain_desc">Domain (Z-A)</option>
+                                        <option value="date_desc">Newest First</option>
+                                        <option value="date_asc">Oldest First</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+                                <button
+                                    className="button-primary"
+                                    disabled={selectedWhitelistDomains.size === 0}
+                                    onClick={() => {
+                                        setWhitelistReevalDomains(Array.from(selectedWhitelistDomains));
+                                        setReevalModalOpen(true);
+                                    }}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        backgroundColor: selectedWhitelistDomains.size > 0 ? '#137333' : 'var(--divider)',
+                                        color: selectedWhitelistDomains.size > 0 ? '#fff' : 'var(--foreground-muted)',
+                                        border: 'none',
+                                        opacity: selectedWhitelistDomains.size > 0 ? 1 : 0.6,
+                                        cursor: selectedWhitelistDomains.size > 0 ? 'pointer' : 'not-allowed',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.5rem'
+                                    }}
+                                >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 11-.57-8.38l5.67-5.67"/>
+                                    </svg>
+                                    Reevaluate Selected ({selectedWhitelistDomains.size})
+                                </button>
+                            </div>
+
+                            {mergedWhitelistItems.length === 0 ? (
+                                <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--foreground-muted)', fontStyle: 'italic', border: '1px dashed var(--divider)', borderRadius: 'var(--radius)' }}>
+                                    No inventory items found. Add domains to your advertiser profiles first.
+                                </div>
+                            ) : (
+                                <div style={{ border: '1px solid var(--divider)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                        <thead>
+                                            <tr style={{ background: 'var(--surface-raised, var(--divider))' }}>
+                                                <th style={{ padding: '0.6rem 1rem', textAlign: 'center', width: '40px', borderBottom: '1px solid var(--divider)' }}>
+                                                    <input 
+                                                        type="checkbox"
+                                                        checked={mergedWhitelistItems.length > 0 && selectedWhitelistDomains.size === mergedWhitelistItems.length}
+                                                        onChange={(e) => {
+                                                            if (e.target.checked) {
+                                                                const allDomains = mergedWhitelistItems.map(item => item.domain);
+                                                                setSelectedWhitelistDomains(new Set(allDomains));
+                                                            } else {
+                                                                setSelectedWhitelistDomains(new Set());
+                                                            }
+                                                        }}
+                                                    />
+                                                </th>
+                                                <th style={{ padding: '0.6rem 1rem', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--foreground-muted)', borderBottom: '1px solid var(--divider)', width: '60px' }}>#</th>
+                                                <th style={{ padding: '0.6rem 1rem', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--foreground-muted)', borderBottom: '1px solid var(--divider)' }}>Domain / Inventory Item</th>
+                                                <th style={{ padding: '0.6rem 1rem', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--foreground-muted)', borderBottom: '1px solid var(--divider)', whiteSpace: 'nowrap' }}>Days Since Scan</th>
+                                                <th style={{ padding: '0.6rem 1rem', textAlign: 'left', fontWeight: 600, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--foreground-muted)', borderBottom: '1px solid var(--divider)' }}>Category</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {mergedWhitelistItems.map((itemObj, idx) => {
+                                                const { domain: item, category, daysSince } = itemObj;
+                                                return (
+                                                    <tr key={item} style={{ borderBottom: idx < mergedWhitelistItems.length - 1 ? '1px solid var(--divider)' : 'none', backgroundColor: selectedWhitelistDomains.has(item) ? 'var(--surface-raised)' : 'transparent' }}>
+                                                        <td style={{ padding: '0.5rem 1rem', textAlign: 'center' }}>
+                                                            <input 
+                                                                type="checkbox"
+                                                                checked={selectedWhitelistDomains.has(item)}
+                                                                onChange={(e) => {
+                                                                    const shiftKey = e.nativeEvent?.shiftKey || false;
+                                                                    const newSet = new Set(selectedWhitelistDomains);
+                                                                    const isChecking = e.target.checked;
+
+                                                                    if (shiftKey && lastCheckedWhitelistIdx.current !== null) {
+                                                                        const start = Math.min(lastCheckedWhitelistIdx.current, idx);
+                                                                        const end = Math.max(lastCheckedWhitelistIdx.current, idx);
+                                                                        for (let i = start; i <= end; i++) {
+                                                                            const d = mergedWhitelistItems[i].domain;
+                                                                            if (isChecking) {
+                                                                                newSet.add(d);
+                                                                            } else {
+                                                                                newSet.delete(d);
+                                                                            }
+                                                                        }
+                                                                    } else {
+                                                                        if (isChecking) {
+                                                                            newSet.add(item);
+                                                                        } else {
+                                                                            newSet.delete(item);
+                                                                        }
+                                                                    }
+
+                                                                    lastCheckedWhitelistIdx.current = idx;
+                                                                    setSelectedWhitelistDomains(newSet);
+                                                                }}
+                                                            />
+                                                        </td>
+                                                        <td style={{ padding: '0.5rem 1rem', color: 'var(--foreground-muted)', fontFamily: 'var(--font-mono, monospace)', fontSize: '0.75rem' }}>{idx + 1}</td>
+                                                        <td style={{ padding: '0.5rem 1rem', fontFamily: 'var(--font-mono, monospace)' }}>{item}</td>
+                                                        <td style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', color: 'var(--foreground-muted)', whiteSpace: 'nowrap' }}>{daysSince}</td>
+                                                        <td style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', color: 'var(--foreground-muted)' }}>
+                                                            {category || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>No category</span>}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </section>
+                    </div>
+                ) : activeTab === 'Settings' ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '2rem', alignItems: 'start' }}>
+                        <aside style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <section className="card" style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', minHeight: '200px' }}>
+                                <span className="label-small" style={{ marginBottom: '0.25rem' }}>Settings Menu</span>
+                                {['Inventory categories', 'Blacklist'].map(tab => (
+                                    <div
+                                        key={tab}
+                                        className={`advertiser-item ${activeSettingsTab === tab ? 'active' : ''}`}
+                                        style={{ cursor: 'pointer' }}
+                                        onClick={() => setActiveSettingsTab(tab)}
+                                    >
+                                        <div className="name">{tab}</div>
+                                    </div>
+                                ))}
+                            </section>
+                        </aside>
+
+                        {activeSettingsTab === 'Inventory categories' ? (
+                            <section className="card" style={{ padding: '2rem' }}>
+                                <div style={{ marginBottom: '1.5rem', borderBottom: '2px solid var(--accent)', paddingBottom: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
+                                        Inventory categories
+                                    </h3>
+                                </div>
+                                
+                                <p style={{ fontSize: '0.875rem', color: 'var(--foreground-muted)', marginBottom: '1.5rem', lineHeight: 1.5 }}>
+                                    Strict list of allowed categories for Gemini website classification. Enter one category per line or separated by commas.
+                                </p>
+
+                                <textarea
+                                    className="input-field scrollbar-thin"
+                                    placeholder={`News\nBlog\nCorporate\nE-commerce\nUncategorized`}
+                                    value={categoriesText}
+                                    onChange={e => setCategoriesText(e.target.value)}
+                                    style={{
+                                        width: '100%',
+                                        minHeight: '320px',
+                                        resize: 'vertical',
+                                        fontFamily: 'var(--font-mono, monospace)',
+                                        fontSize: '0.875rem',
+                                        lineHeight: 1.6,
+                                        padding: '0.75rem',
+                                        border: '1px solid var(--divider)',
+                                        borderRadius: '4px'
+                                    }}
+                                />
+
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem' }}>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--foreground-muted)' }}>
+                                        <strong style={{ color: 'var(--foreground)' }}> {categoriesText.split(/[\n,]+/).filter(d => d.trim().length > 0).length} categories listed.</strong>
+                                    </div>
+                                    <button
+                                        className="button-primary"
+                                        onClick={saveCategories}
+                                        disabled={isSavingCategories}
+                                        style={{ padding: '0.6rem 2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                    >
+                                        <SaveIcon />
+                                        {isSavingCategories ? 'Saving...' : 'Save Categories'}
+                                    </button>
+                                </div>
+                            </section>
+                        ) : activeSettingsTab === 'Blacklist' ? (
+                            <section className="card" style={{ padding: '2rem' }}>
+                                <div style={{ marginBottom: '1.5rem', borderBottom: '2px solid var(--accent)', paddingBottom: '1rem', display: 'inline-block' }}>
+                                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Exclude</h3>
+                                </div>
+                                
+                                <div style={{ border: '1px solid var(--divider)', borderRadius: 'var(--radius)', padding: '1rem' }}>
+                                    <p style={{ fontSize: '0.875rem', color: 'var(--foreground-muted)', marginBottom: '1rem' }}>
+                                        Enter a list of domains to exclude, either one item to a line or separated by commas.
+                                    </p>
+                                    
+                                    <textarea
+                                        className="input-field scrollbar-thin"
+                                        value={blacklistText}
+                                        onChange={(e) => setBlacklistText(e.target.value)}
+                                        style={{ 
+                                            width: '100%', 
+                                            minHeight: '400px', 
+                                            resize: 'vertical',
+                                            fontFamily: 'var(--font-mono, monospace)',
+                                            fontSize: '0.875rem',
+                                            lineHeight: 1.5,
+                                            padding: '0.75rem',
+                                            border: '1px solid var(--divider)',
+                                            borderRadius: '4px'
+                                        }}
+                                        placeholder="youtube.com&#10;reddit.com&#10;facebook.com"
+                                    />
+                                    
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem' }}>
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--foreground-muted)' }}>
+                                            {blacklistText.split(/[\n,]+/).filter(d => d.trim().length > 0).length} domains listed
+                                        </div>
+                                        <button 
+                                            className="button-primary" 
+                                            onClick={saveBlacklist}
+                                            disabled={isSavingBl}
+                                            style={{ padding: '0.5rem 2rem' }}
+                                        >
+                                            {isSavingBl ? 'Saving...' : 'Save Blacklist'}
+                                        </button>
+                                    </div>
+                                </div>
+                            </section>
+                        ) : null}
+                    </div>
                 ) : (
                     <div className="card" style={{ padding: '4rem', textAlign: 'center', color: 'var(--foreground-muted)' }}>
                         <h3>{activeTab} Content</h3>
@@ -1783,13 +2044,45 @@ export default function Home() {
             </footer>
 
             {/* Reevaluation Modal Popup */}
-            {reevalModalOpen && selectedProfileName && (
+            {reevalModalOpen && (selectedProfileName || whitelistReevalDomains) && (
                 <ReevaluationModal 
-                    advertiserName={selectedProfileName} 
+                    advertiserName={whitelistReevalDomains ? null : selectedProfileName} 
+                    domains={whitelistReevalDomains}
                     onClose={() => {
                         setReevalModalOpen(false);
+                        setWhitelistReevalDomains(null);
+                        setSelectedWhitelistDomains(new Set());
                         fetchInventoryProfiles();
-                    }} 
+                    }}
+                    onUpdateWhitelist={async (rejectedDomains) => {
+                        if (!rejectedDomains || rejectedDomains.length === 0) return;
+
+                        const rejectedSet = new Set(rejectedDomains);
+
+                        // Remove rejected domains from every advertiser profile that contains them
+                        for (const profile of inventoryProfiles) {
+                            const remaining = profile.inventory_items.filter(d => !rejectedSet.has(d));
+                            // Only update if something was actually removed
+                            if (remaining.length < profile.inventory_items.length) {
+                                await fetch('/api/advertiser-inventory', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ name: profile.name, inventory_items: remaining })
+                                });
+                            }
+                        }
+
+                        await fetchInventoryProfiles();
+
+                        // If we're currently editing a profile, refresh the editor too
+                        if (selectedProfileName) {
+                            const updated = inventoryProfiles.find(p => p.name === selectedProfileName);
+                            if (updated) {
+                                const newItems = updated.inventory_items.filter(d => !rejectedSet.has(d));
+                                setEditDomains(newItems.join('\n'));
+                            }
+                        }
+                    }}
                 />
             )}
         </div>
